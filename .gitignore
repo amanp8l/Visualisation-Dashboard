@@ -26,7 +26,7 @@ config.json
 # Ignore lock files
 package-lock.json
 yarn.lock
-requirements.txt
+
 
 # Ignore Flask files
 instance/
@@ -50,3 +50,4 @@ venv/
 
 /upload/*
 /public/*
+.vercel
