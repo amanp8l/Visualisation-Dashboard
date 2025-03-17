@@ -1,4 +1,3 @@
-# dewasCsvReader.py
 import os
 import pandas as pd
 from openai import AzureOpenAI
@@ -14,6 +13,7 @@ import warnings
 import re
 from mimetypes import guess_type
 from dotenv import load_dotenv
+import numpy as np
 
 # Load environment variables from .env file
 load_dotenv()
@@ -140,6 +140,589 @@ def get_data_insights(file_path, file_info=None):
         insights["data_types"][sheet_name] = sheet_insights
     
     return insights
+
+def generate_chart_data(file_path, chart_type="overview"):
+    """Generate chart data for frontend visualization based on chart type"""
+    try:
+        if file_path.lower().endswith('.csv'):
+            df = pd.read_csv(file_path)
+            sheet_name = "main"
+        elif file_path.lower().endswith(('.xlsx', '.xls')):
+            # Use first sheet as default
+            df = pd.read_excel(file_path, engine='openpyxl')
+            sheet_name = pd.ExcelFile(file_path, engine='openpyxl').sheet_names[0]
+        else:
+            return None
+        
+        # Sample or process data based on size
+        if len(df) > 1000:
+            df = df.sample(1000, random_state=42)  # Sample for large datasets
+        
+        chart_config = {}
+        
+        if chart_type == "overview":
+            # Bar chart for top 5-10 numeric columns by mean value
+            numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+            if len(numeric_cols) > 0:
+                # Take up to 7 numeric columns
+                cols_to_use = numeric_cols[:7]
+                means = df[cols_to_use].mean().sort_values(ascending=False)
+                
+                chart_config = {
+                    "type": "bar",
+                    "data": {
+                        "labels": means.index.tolist(),
+                        "datasets": [{
+                            "label": "Average Values",
+                            "data": means.values.tolist(),
+                            "backgroundColor": [
+                                'rgba(67, 97, 238, 0.7)',
+                                'rgba(247, 37, 133, 0.7)',
+                                'rgba(58, 12, 163, 0.7)', 
+                                'rgba(46, 196, 182, 0.7)',
+                                'rgba(255, 159, 28, 0.7)',
+                                'rgba(255, 99, 132, 0.7)',
+                                'rgba(54, 162, 235, 0.7)'
+                            ],
+                            "borderColor": "rgba(67, 97, 238, 1)",
+                            "borderWidth": 1
+                        }]
+                    }
+                }
+            else:
+                # Fallback to categorical data if no numeric columns
+                categorical_cols = df.select_dtypes(include=['object']).columns.tolist()
+                if len(categorical_cols) > 0:
+                    col = categorical_cols[0]
+                    counts = df[col].value_counts().head(7)
+                    
+                    chart_config = {
+                        "type": "pie",
+                        "data": {
+                            "labels": counts.index.tolist(),
+                            "datasets": [{
+                                "data": counts.values.tolist(),
+                                "backgroundColor": [
+                                    'rgba(67, 97, 238, 0.7)',
+                                    'rgba(247, 37, 133, 0.7)',
+                                    'rgba(58, 12, 163, 0.7)', 
+                                    'rgba(46, 196, 182, 0.7)',
+                                    'rgba(255, 159, 28, 0.7)',
+                                    'rgba(255, 99, 132, 0.7)',
+                                    'rgba(54, 162, 235, 0.7)'
+                                ],
+                                "borderWidth": 1
+                            }]
+                        }
+                    }
+        
+        elif chart_type == "trend":
+            # Find datetime or sequential columns for trend
+            date_cols = df.select_dtypes(include=['datetime64']).columns.tolist()
+            numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+            
+            if len(date_cols) > 0 and len(numeric_cols) > 0:
+                # Use first date column and first numeric column
+                date_col = date_cols[0]
+                numeric_col = numeric_cols[0]
+                
+                # Group by date and aggregate
+                trend_data = df.groupby(pd.Grouper(key=date_col, freq='M'))[numeric_col].mean().reset_index()
+                trend_data = trend_data.sort_values(by=date_col)
+                
+                chart_config = {
+                    "type": "line",
+                    "data": {
+                        "labels": [d.strftime('%b %Y') for d in trend_data[date_col]],
+                        "datasets": [{
+                            "label": f"{numeric_col} Over Time",
+                            "data": trend_data[numeric_col].tolist(),
+                            "borderColor": "rgba(67, 97, 238, 1)",
+                            "backgroundColor": "rgba(67, 97, 238, 0.2)",
+                            "tension": 0.4,
+                            "fill": True
+                        }]
+                    }
+                }
+            elif len(numeric_cols) >= 2:
+                # Use two numeric columns if no date column
+                x_col = numeric_cols[0]
+                y_col = numeric_cols[1]
+                
+                chart_config = {
+                    "type": "line",
+                    "data": {
+                        "labels": [str(i) for i in range(min(30, len(df)))],
+                        "datasets": [{
+                            "label": y_col,
+                            "data": df[y_col].head(30).tolist(),
+                            "borderColor": "rgba(247, 37, 133, 1)",
+                            "backgroundColor": "rgba(247, 37, 133, 0.2)",
+                            "tension": 0.4,
+                            "fill": True
+                        }]
+                    }
+                }
+        
+        elif chart_type == "distribution":
+            # Histogram for numeric data distribution
+            numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+            if len(numeric_cols) > 0:
+                # Use first numeric column
+                col = numeric_cols[0]
+                
+                # Calculate histogram data
+                hist, bins = np.histogram(df[col].dropna(), bins=7)
+                bin_labels = [f"{round(bins[i], 2)}-{round(bins[i+1], 2)}" for i in range(len(bins)-1)]
+                
+                chart_config = {
+                    "type": "bar",
+                    "data": {
+                        "labels": bin_labels,
+                        "datasets": [{
+                            "label": f"Distribution of {col}",
+                            "data": hist.tolist(),
+                            "backgroundColor": "rgba(58, 12, 163, 0.7)",
+                            "borderColor": "rgba(58, 12, 163, 1)",
+                            "borderWidth": 1
+                        }]
+                    }
+                }
+            else:
+                # Fallback to categorical distribution
+                categorical_cols = df.select_dtypes(include=['object']).columns.tolist()
+                if len(categorical_cols) > 0:
+                    col = categorical_cols[0]
+                    counts = df[col].value_counts().head(7)
+                    
+                    chart_config = {
+                        "type": "doughnut",
+                        "data": {
+                            "labels": counts.index.tolist(),
+                            "datasets": [{
+                                "data": counts.values.tolist(),
+                                "backgroundColor": [
+                                    'rgba(67, 97, 238, 0.7)',
+                                    'rgba(247, 37, 133, 0.7)',
+                                    'rgba(58, 12, 163, 0.7)', 
+                                    'rgba(46, 196, 182, 0.7)',
+                                    'rgba(255, 159, 28, 0.7)',
+                                    'rgba(255, 99, 132, 0.7)',
+                                    'rgba(54, 162, 235, 0.7)'
+                                ],
+                                "borderWidth": 1
+                            }]
+                        }
+                    }
+        
+        elif chart_type == "correlation":
+            # Scatter plot for correlation between two numeric columns
+            numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+            if len(numeric_cols) >= 2:
+                col1 = numeric_cols[0]
+                col2 = numeric_cols[1]
+                
+                # Sample data for scatter plot (max 100 points)
+                sample_size = min(100, len(df))
+                sample_df = df.sample(sample_size)
+                
+                chart_config = {
+                    "type": "scatter",
+                    "data": {
+                        "datasets": [{
+                            "label": f"{col1} vs {col2}",
+                            "data": [{"x": x, "y": y} for x, y in zip(sample_df[col1], sample_df[col2])],
+                            "backgroundColor": "rgba(46, 196, 182, 0.7)",
+                            "borderColor": "rgba(46, 196, 182, 1)",
+                            "pointRadius": 6,
+                            "pointHoverRadius": 8
+                        }]
+                    }
+                }
+            elif len(numeric_cols) > 0:
+                # Fallback to single numeric column distribution
+                col = numeric_cols[0]
+                hist, bins = np.histogram(df[col].dropna(), bins=7)
+                bin_labels = [f"{round(bins[i], 2)}-{round(bins[i+1], 2)}" for i in range(len(bins)-1)]
+                
+                chart_config = {
+                    "type": "bar",
+                    "data": {
+                        "labels": bin_labels,
+                        "datasets": [{
+                            "label": f"Distribution of {col}",
+                            "data": hist.tolist(),
+                            "backgroundColor": "rgba(46, 196, 182, 0.7)",
+                            "borderColor": "rgba(46, 196, 182, 1)",
+                            "borderWidth": 1
+                        }]
+                    }
+                }
+                
+        elif chart_type == "custom":
+            # Radar chart for comparing multiple metrics
+            numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+            if len(numeric_cols) >= 3:
+                # Use up to 6 numeric columns
+                cols_to_use = numeric_cols[:6]
+                
+                # Normalize values for radar chart
+                normalized_values = []
+                for col in cols_to_use:
+                    # Get mean or other representative value
+                    val = df[col].mean()
+                    # Min-max normalize to 0-100 range
+                    min_val = df[col].min()
+                    max_val = df[col].max()
+                    if max_val > min_val:
+                        normalized = (val - min_val) / (max_val - min_val) * 100
+                    else:
+                        normalized = 50  # Default value if min equals max
+                    normalized_values.append(normalized)
+                
+                chart_config = {
+                    "type": "radar",
+                    "data": {
+                        "labels": cols_to_use,
+                        "datasets": [{
+                            "label": "Data Profile",
+                            "data": normalized_values,
+                            "backgroundColor": "rgba(255, 159, 28, 0.2)",
+                            "borderColor": "rgba(255, 159, 28, 1)",
+                            "borderWidth": 2,
+                            "pointBackgroundColor": "rgba(255, 159, 28, 1)",
+                            "pointBorderColor": "#fff",
+                            "pointHoverBackgroundColor": "#fff",
+                            "pointHoverBorderColor": "rgba(255, 159, 28, 1)"
+                        }]
+                    }
+                }
+            else:
+                # Fallback to bar chart
+                categorical_cols = df.select_dtypes(include=['object']).columns.tolist()
+                if len(categorical_cols) > 0:
+                    col = categorical_cols[0]
+                    counts = df[col].value_counts().head(7)
+                    
+                    chart_config = {
+                        "type": "bar",
+                        "data": {
+                            "labels": counts.index.tolist(),
+                            "datasets": [{
+                                "label": f"Count of {col}",
+                                "data": counts.values.tolist(),
+                                "backgroundColor": "rgba(255, 159, 28, 0.7)",
+                                "borderColor": "rgba(255, 159, 28, 1)",
+                                "borderWidth": 1
+                            }]
+                        }
+                    }
+        
+        return {
+            "chart_config": chart_config,
+            "sheet_name": sheet_name
+        }
+    
+    except Exception as e:
+        print(f"Error generating chart data: {str(e)}")
+        traceback.print_exc()
+        return None
+
+def generate_file_summary(file_path):
+    """Generate summary information about the file for the dashboard"""
+    try:
+        file_info = {'file_type': None, 'sheets_info': None}
+        summary_data = {}
+        
+        # Get basic file info
+        file_size = os.path.getsize(file_path)
+        if file_size < 1024:
+            file_size_str = f"{file_size} bytes"
+        elif file_size < 1024 * 1024:
+            file_size_str = f"{file_size/1024:.1f} KB"
+        else:
+            file_size_str = f"{file_size/(1024*1024):.1f} MB"
+        
+        summary_data['fileSize'] = file_size_str
+        summary_data['fileName'] = os.path.basename(file_path)
+        
+        # Handle different file types
+        if file_path.lower().endswith('.csv'):
+            file_info['file_type'] = 'csv'
+            df = pd.read_csv(file_path)
+            summary_data['fileType'] = 'CSV'
+            summary_data['rows'] = len(df)
+            summary_data['columns'] = len(df.columns)
+            
+            # Get sheet info (just one sheet for CSV)
+            sheet_data = {
+                'name': 'main',
+                'rowCount': len(df),
+                'columnCount': len(df.columns),
+                'columns': list(df.columns)
+            }
+            summary_data['sheets'] = [sheet_data]
+            
+        elif file_path.lower().endswith(('.xlsx', '.xls')):
+            file_info['file_type'] = 'excel'
+            # Get information about all sheets
+            file_info['sheets_info'] = get_excel_sheets_info(file_path)
+            
+            summary_data['fileType'] = 'Excel'
+            summary_data['sheets'] = []
+            
+            total_rows = 0
+            max_columns = 0
+            
+            for sheet_info in file_info['sheets_info']:
+                sheet_name = sheet_info['name']
+                row_count = sheet_info['shape'][0]
+                col_count = sheet_info['shape'][1]
+                
+                total_rows += row_count
+                max_columns = max(max_columns, col_count)
+                
+                sheet_data = {
+                    'name': sheet_name,
+                    'rowCount': row_count,
+                    'columnCount': col_count,
+                    'columns': sheet_info['columns']
+                }
+                summary_data['sheets'].append(sheet_data)
+            
+            summary_data['rows'] = total_rows
+            summary_data['columns'] = max_columns
+        
+        # Extract data insights including common tags
+        file_info['data_insights'] = get_data_insights(file_path, file_info)
+        
+        # Get key metrics
+        key_metrics = []
+        quick_stats = []
+        
+        if file_info['file_type'] == 'csv':
+            dfs = [('main', pd.read_csv(file_path))]
+        else:
+            dfs = []
+            for sheet in file_info['sheets_info']:
+                df = pd.read_excel(file_path, sheet_name=sheet['name'], engine='openpyxl')
+                dfs.append((sheet['name'], df))
+        
+        # Process each dataframe
+        for sheet_name, df in dfs:
+            # Get numeric columns for stats
+            numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+            
+            # Add null value statistics
+            null_count = df.isna().sum().sum()
+            null_percent = (null_count / (df.shape[0] * df.shape[1]) * 100) if df.size > 0 else 0
+            key_metrics.append({
+                'name': f'Missing Values{" in " + sheet_name if len(dfs) > 1 else ""}',
+                'value': f'{null_count} ({null_percent:.1f}%)'
+            })
+            
+            # Add basic stats for numeric columns
+            for col in numeric_cols[:3]:  # Limit to first 3 numeric columns
+                try:
+                    key_metrics.append({
+                        'name': f'Avg {col}{" in " + sheet_name if len(dfs) > 1 else ""}',
+                        'value': f'{df[col].mean():.2f}'
+                    })
+                    
+                    if len(quick_stats) < 4:  # Add only up to 4 quick stats
+                        quick_stats.append({
+                            'name': f'{col} (Max)',
+                            'value': f'{df[col].max():.0f}'
+                        })
+                except:
+                    pass
+            
+            # Add categorical column stats
+            cat_cols = df.select_dtypes(include=['object']).columns.tolist()
+            for col in cat_cols[:2]:  # Limit to first 2 categorical columns
+                try:
+                    unique_count = df[col].nunique()
+                    key_metrics.append({
+                        'name': f'Unique {col}{" in " + sheet_name if len(dfs) > 1 else ""}',
+                        'value': f'{unique_count}'
+                    })
+                    
+                    # Add most common value if not already reached limit
+                    if len(quick_stats) < 4:
+                        most_common = df[col].value_counts().index[0]
+                        if len(str(most_common)) > 15:
+                            most_common = str(most_common)[:12] + "..."
+                        quick_stats.append({
+                            'name': f'Most Common {col}',
+                            'value': f'{most_common}'
+                        })
+                except:
+                    pass
+        
+        # Use GPT to generate a summary of the file
+        summary_text = generate_ai_summary(file_path, file_info)
+        summary_data['summary'] = summary_text
+        summary_data['keyMetrics'] = key_metrics
+        summary_data['quickStats'] = quick_stats
+        
+        # Generate suggested visualizations
+        summary_data['suggestedVisualizations'] = generate_suggested_visualizations(file_path, file_info)
+        
+        return summary_data
+    
+    except Exception as e:
+        print(f"Error generating file summary: {str(e)}")
+        traceback.print_exc()
+        return {
+            'summary': f"Error analyzing file: {str(e)}",
+            'rows': 0,
+            'columns': 0,
+            'fileSize': 'Unknown',
+            'fileName': os.path.basename(file_path),
+            'fileType': 'Unknown'
+        }
+
+def generate_ai_summary(file_path, file_info):
+    """Generate an AI-powered summary of the file contents"""
+    try:
+        # Construct file info for prompting
+        file_details = f"File: {os.path.basename(file_path)}"
+        
+        if file_info['file_type'] == 'csv':
+            df = pd.read_csv(file_path)
+            file_details += f"\nType: CSV file with {len(df)} rows and {len(df.columns)} columns"
+            file_details += f"\nColumns: {', '.join(df.columns.tolist())}"
+            
+            # Add sample data
+            file_details += "\n\nSample data (first 5 rows):\n"
+            file_details += df.head().to_string()
+            
+        elif file_info['file_type'] == 'excel':
+            file_details += f"\nType: Excel file with {len(file_info['sheets_info'])} sheets"
+            
+            for sheet in file_info['sheets_info']:
+                file_details += f"\n\nSheet: {sheet['name']}"
+                file_details += f"\nRows: {sheet['shape'][0]}, Columns: {sheet['shape'][1]}"
+                file_details += f"\nColumns: {', '.join(sheet['columns'])}"
+        
+        prompt = f"""Analyze this data file and provide a concise summary (2-3 sentences) that describes:
+1. The type of data contained in the file
+2. The main entities or subjects represented
+3. Key variables/columns of interest
+4. Potential analytical value of this dataset
+
+File details:
+{file_details}
+
+Keep your summary focused, informative, and under 100 words.
+"""
+
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            temperature=0.3,
+            max_tokens=150,
+            messages=[
+                {"role": "system", "content": "You are a data analyst who provides concise, insightful summaries of data files."},
+                {"role": "user", "content": prompt}
+            ]
+        )
+        
+        summary = response.choices[0].message.content.strip()
+        return summary
+    
+    except Exception as e:
+        print(f"Error generating AI summary: {str(e)}")
+        return "This file contains data that can be analyzed for insights. Upload complete."
+
+def generate_suggested_visualizations(file_path, file_info):
+    """Generate suggested visualizations for the dashboard"""
+    try:
+        visualizations = []
+        
+        # Read data based on file type
+        if file_info['file_type'] == 'csv':
+            dfs = [('main', pd.read_csv(file_path))]
+        else:
+            dfs = []
+            for sheet in file_info['sheets_info'][:2]:  # Limit to first 2 sheets
+                df = pd.read_excel(file_path, sheet_name=sheet['name'], engine='openpyxl')
+                dfs.append((sheet['name'], df))
+        
+        for sheet_name, df in dfs:
+            # Sample data if large
+            if len(df) > 1000:
+                df = df.sample(1000, random_state=42)
+            
+            # Check for datetime columns for time series
+            date_cols = df.select_dtypes(include=['datetime64']).columns.tolist()
+            # Also check for potential date columns stored as strings
+            for col in df.select_dtypes(include=['object']).columns:
+                try:
+                    # Try to convert to datetime
+                    pd.to_datetime(df[col], errors='raise')
+                    date_cols.append(col)
+                except:
+                    pass
+            
+            # Check for numeric columns
+            numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+            
+            # Time series visualization if we have date and numeric columns
+            if date_cols and numeric_cols and len(visualizations) < 3:
+                date_col = date_cols[0]
+                numeric_col = numeric_cols[0]
+                
+                visualizations.append({
+                    'title': f'Time Trend of {numeric_col}',
+                    'type': 'line',
+                    'sheet': sheet_name,
+                    'description': f'Trend of {numeric_col} over time'
+                })
+            
+            # Distribution of a numeric column
+            if numeric_cols and len(visualizations) < 3:
+                col = numeric_cols[0]
+                
+                visualizations.append({
+                    'title': f'Distribution of {col}',
+                    'type': 'histogram',
+                    'sheet': sheet_name,
+                    'description': f'Frequency distribution of {col} values'
+                })
+            
+            # Categorical data breakdown
+            cat_cols = df.select_dtypes(include=['object']).columns.tolist()
+            if cat_cols and len(visualizations) < 3:
+                col = cat_cols[0]
+                
+                visualizations.append({
+                    'title': f'Breakdown by {col}',
+                    'type': 'pie',
+                    'sheet': sheet_name,
+                    'description': f'Distribution of data across {col} categories'
+                })
+            
+            # Correlation between two numeric columns
+            if len(numeric_cols) >= 2 and len(visualizations) < 3:
+                col1 = numeric_cols[0]
+                col2 = numeric_cols[1]
+                
+                visualizations.append({
+                    'title': f'Correlation: {col1} vs {col2}',
+                    'type': 'scatter',
+                    'sheet': sheet_name,
+                    'description': f'Relationship between {col1} and {col2}'
+                })
+        
+        return visualizations
+    
+    except Exception as e:
+        print(f"Error generating suggested visualizations: {str(e)}")
+        return [
+            {'title': 'Data Overview', 'type': 'bar', 'description': 'Overview of main metrics'},
+            {'title': 'Distribution Analysis', 'type': 'pie', 'description': 'Distribution of key categories'},
+            {'title': 'Trend Analysis', 'type': 'line', 'description': 'Trends over time'}
+        ]
 
 def split_complex_query(user_query, file_path, file_info):
     """Split a complex query into multiple simpler queries"""
@@ -454,142 +1037,7 @@ def pythonCodeTextSummarization(user_query, outputText, columnsName, filePath, f
     )
     print(response.usage.total_tokens)
     return response.choices[0].message.content
-def pythonPlotSummarization(user_query, image_path):
-    base64_image = local_image_to_data_url("public/" + image_path)
 
-    response = client.chat.completions.create(
-        model="gpt-4o",
-        temperature=0,
-        messages=[
-            {"role": "user", "content": [
-                {
-                    "type": "text",
-                    "text": '''The given image is a data visualization based on the user's query.
-                    
-                    Provide a CONCISE explanation that:
-                    1. Briefly states what the chart shows
-                    2. Highlights 1-2 key insights from the visualization
-                    3. Keeps the explanation under 50 words unless the user specifically asked for a detailed analysis
-                    
-                    DO NOT:
-                    - Be verbose or technical
-                    - Explain chart features (like axes or colors)
-                    - Mention anything about code or implementation
-                    '''
-                },
-                {
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"{base64_image}"
-                    }
-                }
-            ]},
-            {"role": "user", "content": user_query}
-        ],
-    )
-    return response.choices[0].message.content
-
-def dewasCsvReader(user_query, filePath):
-    global conversationalMessage
-    conversationalMessage = conversationalMessage[-6:]
-    conversationalMessage.append({"role": "user", "content": user_query})
-    
-    # Initialize file_info dictionary to store metadata
-    file_info = {'file_type': None, 'sheets_info': None}
-    
-    # Handle different file types
-    if filePath.lower().endswith('.csv'):
-        file_info['file_type'] = 'csv'
-        data = pd.read_csv(filePath)
-        columns_info = data.dtypes
-        columnsName = ', '.join(f"'{col}' ({dtype})" for col, dtype in columns_info.items())
-        fileshape = str(data.shape)
-    elif filePath.lower().endswith(('.xlsx', '.xls')):
-        file_info['file_type'] = 'excel'
-        # Get information about all sheets
-        file_info['sheets_info'] = get_excel_sheets_info(filePath)
-        
-        # Get first sheet info for initial context
-        first_sheet = file_info['sheets_info'][0]['name'] if file_info['sheets_info'] else None
-        if first_sheet:
-            data = pd.read_excel(filePath, sheet_name=first_sheet)
-            columns_info = data.dtypes
-            columnsName = ', '.join(f"'{col}' ({dtype})" for col, dtype in columns_info.items())
-            fileshape = str(data.shape)
-            columnsName += f" (from sheet '{first_sheet}')"
-        else:
-            return {'response': f"Unable to read Excel file sheets", 'plot': None}
-    else:
-        return {'response': f"File format not supported. please upload other file", 'plot': None}
-    
-    # Extract data insights including common tags
-    file_info['data_insights'] = get_data_insights(filePath, file_info)
-    
-    # Check if query is complex and should be split
-    query_analysis = split_complex_query(user_query, filePath, file_info)
-    
-    if query_analysis.get('is_complex', False):
-        print(f"Complex query detected. Split into {len(query_analysis['sub_queries'])} sub-queries")
-        
-        # Process each sub-query
-        results = []
-        for i, sub_query in enumerate(query_analysis['sub_queries']):
-            print(f"Processing sub-query {i+1}: {sub_query}")
-            
-            # Create a temporary conversation context for this sub-query
-            temp_conversation = conversationalMessage[:-1] + [{"role": "user", "content": sub_query}]
-            
-            # Process the sub-query
-            sub_result = process_single_query(sub_query, temp_conversation, columnsName, filePath, fileshape, file_info)
-            results.append({
-                'query': sub_query,
-                'response': sub_result['response'],
-                'plot': sub_result['plot']
-            })
-        
-        # Format the response with interleaved text and plots
-        combined_response = ""
-        plots = []
-        
-        # Add each result with its explanation and chart
-        for i, result in enumerate(results):
-            # Check if response is a dictionary and extract the string if needed
-            response_text = result['response']
-            if isinstance(response_text, dict):
-                # If response is a dictionary, try to get a meaningful text from it
-                if 'text' in response_text:
-                    response_text = response_text['text']
-                elif 'content' in response_text:
-                    response_text = response_text['content']
-                else:
-                    # Convert dict to string as a fallback
-                    response_text = str(response_text)
-            
-            # Add response text without the query heading
-            combined_response += response_text + "\n\n"
-            
-            if result['plot']:
-                plots.append(result['plot'])
-        
-        # Add the combined response to the conversation history
-        conversationalMessage.append({"role": "assistant", "content": combined_response})
-        
-        return {'response': combined_response, 'plot': plots if plots else None}
-    else:
-        # Process as a single query
-        result = process_single_query(user_query, conversationalMessage, columnsName, filePath, fileshape, file_info)
-        
-        # Ensure response is a string
-        if isinstance(result['response'], dict):
-            if 'text' in result['response']:
-                result['response'] = result['response']['text']
-            elif 'content' in result['response']:
-                result['response'] = result['response']['content']
-            else:
-                result['response'] = str(result['response'])
-                
-        conversationalMessage.append({"role": "assistant", "content": result['response']})
-        return result
 def pythonPlotSummarization(user_query, image_path):
     base64_image = local_image_to_data_url("public/" + image_path)
 
@@ -662,7 +1110,6 @@ def dewasCsvReader(user_query, filePath):
     # Check if query is complex and should be split
     query_analysis = split_complex_query(user_query, filePath, file_info)
     
-    # Inside the dewasCsvReader function, replace the if block for complex queries with this:
     # Inside the dewasCsvReader function, replace the if block for complex queries with this:
     if query_analysis.get('is_complex', False):
         print(f"Complex query detected. Split into {len(query_analysis['sub_queries'])} sub-queries")
@@ -810,15 +1257,3 @@ def process_single_query(user_query, conversation_context, columnsName, filePath
         
     print({'response': textResponse, 'plot': plot})
     return {'response': textResponse, 'plot': plot}
-    
-if __name__ == "__main__":
-    filePath = r"D:\your_excel_file.xlsx"  # Update with your file path
-    while True:
-        text = input("Ask: ")
-        result = dewasCsvReader(text, filePath=filePath)
-        print(result['response'])
-        if result['plot']:
-            if isinstance(result['plot'], list):
-                print(f"Multiple plots generated: {result['plot']}")
-            else:
-                print(f"Plot saved as: {result['plot']}")

@@ -26,17 +26,9 @@
     pip install -r requirements.txt
     ```
 
-4. Set up the Node.js environment:
-    ```sh
-    cd ui
-    ```
+4. to open ui 
+open index.html from ui folder
 
-    ```sh
-    npm i
-    ```
-    ```sh
-    npm run dev
-    ```
 
 ### Running the Application
 

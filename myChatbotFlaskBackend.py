@@ -1,8 +1,7 @@
-# myChatbotFlaskBackend.py
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import os
-from dewasCsvReader import dewasCsvReader
+from dewasCsvReader import dewasCsvReader, generate_file_summary, generate_chart_data
 from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
 
@@ -11,12 +10,14 @@ load_dotenv()
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
-public_path = "http://localhost:8080/images/"
+public_path = "https://chartaiapi.amanpatel.in/images/"
 upload_folder = os.path.join(os.path.dirname(__file__), 'upload')
+public_folder = os.path.join(os.path.dirname(__file__), 'public')
 ALLOWED_EXTENSIONS = {'csv', 'xlsx'}
 
-# Create upload folder if it doesn't exist
+# Create upload and public folders if they don't exist
 os.makedirs(upload_folder, exist_ok=True)
+os.makedirs(public_folder, exist_ok=True)
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -37,7 +38,7 @@ def upload_file():
 
 @app.route('/generate', methods=['POST'])
 def generate():
-    print("API called by someone")
+    print("Generate API called")
     data = request.json
     finalResponse = {}
     prompt = data.get('prompt')
@@ -74,11 +75,64 @@ def generate():
             
     return jsonify(finalResponse)
 
+@app.route('/summary/<filename>', methods=['GET'])
+def get_file_summary(filename):
+    """Get summary information about an uploaded file for the UI dashboard"""
+    print(f"Summary API called for file: {filename}")
+    filepath = os.path.join(upload_folder, secure_filename(filename))
+    
+    if not os.path.exists(filepath):
+        return jsonify({'error': 'File not found'}), 404
+    
+    try:
+        # Generate summary data
+        summary_data = generate_file_summary(filepath)
+        return jsonify(summary_data)
+    except Exception as e:
+        print(f"Error generating summary: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f'Failed to generate summary: {str(e)}'}), 500
+
+@app.route('/chart-data/<filename>', methods=['GET'])
+def get_chart_data(filename):
+    """Get chart data for a specific visualization type"""
+    chart_type = request.args.get('type', 'overview')  # Default to overview if not specified
+    filepath = os.path.join(upload_folder, secure_filename(filename))
+    
+    if not os.path.exists(filepath):
+        return jsonify({'error': 'File not found'}), 404
+    
+    try:
+        # Generate chart data for the frontend
+        chart_data = generate_chart_data(filepath, chart_type)
+        if chart_data:
+            return jsonify(chart_data)
+        else:
+            return jsonify({'error': 'Could not generate chart data'}), 500
+    except Exception as e:
+        print(f"Error generating chart data: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f'Failed to generate chart data: {str(e)}'}), 500
+
+@app.route('/delete/<filename>', methods=['DELETE'])
+def delete_file(filename):
+    """Delete an uploaded file"""
+    filepath = os.path.join(upload_folder, secure_filename(filename))
+    
+    if not os.path.exists(filepath):
+        return jsonify({'error': 'File not found'}), 404
+    
+    try:
+        os.remove(filepath)
+        return jsonify({'success': True, 'message': 'File deleted successfully'})
+    except Exception as e:
+        return jsonify({'error': f'Failed to delete file: {str(e)}'}), 500
+
 # Route to serve images from the 'public' folder
 @app.route('/images/<path:filename>', methods=['GET'])
 def get_image(filename):
-    # The directory where images are stored
-    public_folder = os.path.join(os.path.dirname(__file__), 'public')
     return send_from_directory(public_folder, filename)
 
 if __name__ == '__main__':
